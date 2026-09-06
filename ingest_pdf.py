@@ -4,22 +4,37 @@ Applies RecursiveCharacterTextSplitter to break the long document into chunks.
 Run once (or after regenerating the PDF): python ingest_pdf.py
 """
 
-#to convert the pdf into chunks..and each chunks are stored as vector embeddings (chunks are overlapped to maintain understandings or relation)
 import os
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+
+# ✅ lightweight embedding (NO torch, NO transformers)
+from fastembed import TextEmbedding
 
 CHROMA_DIR = "chroma_store"
 COLLECTION = "guides"
-PDF_PATH   = os.path.join("data", "telecom_guide.pdf")
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+PDF_PATH = os.path.join("data", "telecom_guide.pdf")
 
-CHUNK_SIZE    = 600
+CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
+
+
+# -------------------------
+# FAST EMBEDDING WRAPPER
+# -------------------------
+class FastEmbedWrapper:
+    def __init__(self):
+        # small, fast, CPU-friendly model
+        self.model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+
+    def embed_documents(self, texts):
+        return list(self.model.embed(texts))
+
+    def embed_query(self, text):
+        return list(self.model.embed([text]))[0]
 
 
 def main():
@@ -34,26 +49,29 @@ def main():
         chunk_overlap=CHUNK_OVERLAP,
         separators=["\n\n", "\n", ".", " "],
     )
+
     chunks = splitter.split_documents(pages)
 
-    # Tag each chunk so we know it came from the guide
+    # Tag metadata
     for i, chunk in enumerate(chunks):
         chunk.metadata["source"] = "guide"
         chunk.metadata["chunk_index"] = i
 
     print(f"  {len(chunks)} chunks produced.")
 
-    print("Initialising embedding model...")
-    embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+    print("Initializing FAST embedding model (no torch)...")
+    embeddings = FastEmbedWrapper()
 
-    print(f"Embedding and storing in Chroma collection '{COLLECTION}'...")
+    print(f"Storing in Chroma collection '{COLLECTION}'...")
+
     vectorstore = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
         collection_name=COLLECTION,
         persist_directory=CHROMA_DIR,
     )
-    print(f"  Done. {vectorstore._collection.count()} vectors stored.")
+
+    print(f"Done. {vectorstore._collection.count()} vectors stored.")
 
 
 if __name__ == "__main__":
